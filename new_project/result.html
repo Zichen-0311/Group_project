@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="UTF-8">
+<title>Trajectory analysis results</title>
+<style>
+    body { font-family: Arial; text-align: center; }
+    img { width: 80%; margin: 20px 0; border: 1px solid #ccc; }
+</style>
+</head>
+
+<body>
+
+<h2>Trajectory analysis results</h2>
+
+<img id="raw_human" style="max-width:300px;">
+<img id="human_plot" style="max-width:300px;">
+
+<img id="raw_ai" style="max-width:300px;">
+<img id="ai_plot" style="max-width:300px;">
+
+<div id="result"></div>
+
+<script>
+const params = new URLSearchParams(window.location.search);
+const session = params.get("session");
+
+let human = JSON.parse(localStorage.getItem("human_" + session));
+let ai = JSON.parse(localStorage.getItem("ai_" + session));
+
+fetch("http://127.0.0.1:9000/analyze", {
+    method: "POST",
+    headers: {"Content-Type": "application/json"},
+    body: JSON.stringify({
+        session_id: session,
+        human_points: human,
+        ai_points: ai
+    })
+})
+.then(r=>r.json())
+.then(res=>{
+    document.getElementById("raw_human").src = "http://127.0.0.1:9000/" + res.raw_human;
+    document.getElementById("raw_ai").src = "http://127.0.0.1:9000/" + res.raw_ai;
+
+    document.getElementById("human_plot").src = "http://127.0.0.1:9000/" + res.human_plot;
+    document.getElementById("ai_plot").src = "http://127.0.0.1:9000/" + res.ai_plot;
+
+    document.getElementById("result").innerText =
+        "Human trajectory AI probability：" + (res.human_score * 100).toFixed(1) + "%\n" +
+        "AI trajectory AI probability：" + (res.ai_score * 100).toFixed(1) + "%";
+});
+</script>
+
+</body>
+</html>

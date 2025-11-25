@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<title>AI Verification Code</title>
+<style>
+    body { font-family: Arial; text-align: center; margin-top: 30px; }
+    #grid {
+        display: grid;
+        grid-template-columns: repeat(3, 120px);
+        grid-template-rows: repeat(4, 120px);
+        grid-gap: 10px;
+        justify-content: center;
+        margin-top: 20px;
+    }
+    .cell {
+        width: 120px; height: 120px; background: #eee;
+        display: flex; justify-content: center; align-items: center;
+        font-size: 40px; cursor: pointer; border-radius: 10px;
+    }
+    .cell:hover { background: #ddd; }
+    #result { margin-top: 20px; font-size: 20px; color: #333; white-space: pre-line; }
+    #answerBox {
+        width: 260px;
+        font-size: 22px;
+        padding: 6px 10px;
+        margin-top: 10px;
+        text-align: center;
+    }
+    button {
+        margin: 8px;
+        padding: 8px 16px;
+        font-size: 16px;
+    }
+</style>
+</head>
+
+<body>
+
+<h2>AI Verification Code (Math + Mouse Trajectory)</h2>
+
+<h3>Problems:</h3>
+<p id="q1"></p>
+<p id="q2"></p>
+<p id="q3"></p>
+<p id="q4"></p>
+
+<h3>Click order (by question index, not by result):</h3>
+<p id="order_display" style="font-size:22px; color:#d9534f;"></p>
+
+<div>
+    <input id="answerBox" type="text" placeholder="" readonly />
+</div>
+
+<div id="grid"></div>
+
+<div>
+    <button onclick="validateHuman()">Validate</button>
+    <button onclick="clearInput()">Clear</button>
+    <button onclick="submitAI()">AI Attack (Generate AI Trajectory)</button>
+    <button onclick="goAnalyze()">Analyze Trajectories</button>
+</div>
+
+<div id="result"></div>
+
+<script>
+let finalValidatedCode = "";
+let order = [];          // e.g. ["3","1","4","2"]
+let captchaCode = "";    // true code, e.g. "5073"
+let humanPoints = [];
+let aiPoints = [];
+let isRecording = false;
+let userSequence = [];   // sequence user actually typed, e.g. ["5","0","7","3"]
+
+// ======================= Get math problems and verification code =======================
+fetch("http://127.0.0.1:9000/captcha")
+  .then(r => r.json())
+  .then(data => {
+      // show questions
+      document.getElementById("q1").innerText = data.questions[0];
+      document.getElementById("q2").innerText = data.questions[1];
+      document.getElementById("q3").innerText = data.questions[2];
+      document.getElementById("q4").innerText = data.questions[3];
+
+      // show order
+      order = data.order;
+      document.getElementById("order_display").innerText =
+          "You should click the numeric answers in this question order: " + order.join(" → ");
+
+      // true code (only used in validation, not shown)
+      captchaCode = data.code;
+      console.log("DEBUG true code:", captchaCode);
+  });
+
+
+// ======================= Build keypad (1–9 and 0) =======================
+let gridDiv = document.getElementById("grid");
+const keypad_layout = [
+    ["1","2","3"],
+    ["4","5","6"],
+    ["7","8","9"],
+    ["", "0", ""]
+];
+
+keypad_layout.forEach(row => {
+    row.forEach(key => {
+        let cell = document.createElement("div");
+        cell.className = "cell";
+
+        if (key === "") {
+            // empty spacer to center the "0" key
+            cell.style.visibility = "hidden";
+            gridDiv.appendChild(cell);
+            return;
+        }
+
+        cell.innerText = key;
+
+        cell.addEventListener("mousedown", e => {
+            let clicked = cell.innerText;
+
+            // start trajectory recording on first click
+            if (userSequence.length === 0) {
+                humanPoints = [];
+                isRecording = true;
+            }
+
+            userSequence.push(clicked);
+
+            // append to input box
+            let box = document.getElementById("answerBox");
+            box.value += clicked;
+
+            // record point
+            humanPoints.push({x: e.clientX, y: e.clientY, t: Date.now()});
+        });
+
+        cell.addEventListener("mousemove", e => {
+            if (isRecording) {
+                humanPoints.push({x: e.clientX, y: e.clientY, t: Date.now()});
+            }
+        });
+
+        cell.addEventListener("mouseup", e => {
+            if (isRecording) {
+                humanPoints.push({x: e.clientX, y: e.clientY, t: Date.now()});
+            }
+        });
+
+        gridDiv.appendChild(cell);
+    });
+});
+
+
+// ======================= Clear button: reset input and traces =======================
+function clearInput() {
+    document.getElementById("answerBox").value = "";
+}
+
+
+// ======================= Validate: answer + trajectory =======================
+function validateHuman() {
+    const answer = document.getElementById("answerBox").value;
+
+    fetch("http://127.0.0.1:9000/human_attack", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            sequence: captchaCode,   // still use real captcha
+            answer: answer,          // what user typed
+            points: humanPoints      // DO NOT CLEAR after validate
+        })
+    })
+    .then(r => r.json())
+    .then(res => {
+        let text = res.msg;
+
+        if (res.ai_prob !== undefined && res.ai_prob >= 0) {
+            text += "\nAI probability: " + (res.ai_prob * 100).toFixed(1) + "%";
+        }
+
+        // ******* NEW: popup instead of inline text *******
+        alert(text);
+
+        // show result also on page
+        document.getElementById("result").innerText = text;
+
+        // ******* IMPORTANT *******
+        // Only clear input, not trajectory, not captcha
+        document.getElementById("answerBox").value = "";
+        userSequence = [];
+
+        // Keep humanPoints unchanged so analyze can use it
+        // isRecording reset for next input
+        isRecording = false;
+    });
+}
+
+
+// ======================= AI attack: generate AI trajectory for this code =======================
+function submitAI() {
+    fetch("http://127.0.0.1:9000/ai_attack", {
+        method: "POST",
+        headers: {"Content-Type": "application/json"},
+        body: JSON.stringify({
+            sequence: captchaCode
+        })
+    })
+    .then(r => r.json())
+    .then(res => {
+        aiPoints = res.points;
+        document.getElementById("result").innerText =
+            "AI trajectory generated.\nAI probability (model self-eval): " +
+            (res.ai_prob * 100).toFixed(1) + "%";
+    });
+}
+
+
+// ======================= Jump to result.html for detailed plots =======================
+function goAnalyze() {
+    let session = Date.now().toString();
+    localStorage.setItem("human_" + session, JSON.stringify(humanPoints));
+    localStorage.setItem("ai_" + session, JSON.stringify(aiPoints));
+    window.location.href = "result.html?session=" + session;
+}
+</script>
+
+</body>
+</html>
